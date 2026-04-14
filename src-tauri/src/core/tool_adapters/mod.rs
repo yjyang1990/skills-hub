@@ -148,8 +148,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             id: ToolId::Antigravity,
             display_name: "Antigravity",
-            // add-skill global path: ~/.gemini/antigravity/global_skills/
-            relative_skills_dir: ".gemini/antigravity/global_skills",
+            // add-skill global path: ~/.gemini/antigravity/skills/
+            relative_skills_dir: ".gemini/antigravity/skills",
             relative_detect_dir: ".gemini/antigravity",
         },
         ToolAdapter {
@@ -170,8 +170,8 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             id: ToolId::Augment,
             display_name: "Augment",
-            // add-skill global path: ~/.augment/rules/
-            relative_skills_dir: ".augment/rules",
+            // add-skill global path: ~/.augment/skills/
+            relative_skills_dir: ".augment/skills",
             relative_detect_dir: ".augment",
         },
         ToolAdapter {
@@ -191,9 +191,9 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             id: ToolId::Cline,
             display_name: "Cline",
-            // add-skill global path: ~/.cline/skills/
-            relative_skills_dir: ".cline/skills",
-            relative_detect_dir: ".cline",
+            // add-skill global path: ~/.agents/skills/
+            relative_skills_dir: ".agents/skills",
+            relative_detect_dir: ".agents",
         },
         ToolAdapter {
             id: ToolId::CodeBuddy,
@@ -431,6 +431,14 @@ pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
         .collect()
 }
 
+pub fn adapters_sharing_project_skills_dir(adapter: &ToolAdapter) -> Vec<ToolAdapter> {
+    let relative = project_relative_skills_dir(adapter);
+    default_tool_adapters()
+        .into_iter()
+        .filter(|a| project_relative_skills_dir(a) == relative)
+        .collect()
+}
+
 pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
     default_tool_adapters()
         .into_iter()
@@ -440,6 +448,61 @@ pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
 pub fn resolve_default_path(adapter: &ToolAdapter) -> Result<PathBuf> {
     let home = dirs::home_dir().context("failed to resolve home directory")?;
     Ok(home.join(adapter.relative_skills_dir))
+}
+
+pub fn resolve_project_path(adapter: &ToolAdapter, project_root: &Path) -> Result<PathBuf> {
+    Ok(project_root.join(project_relative_skills_dir(adapter)))
+}
+
+pub fn supports_project_scope(adapter: &ToolAdapter) -> bool {
+    let _ = adapter;
+    true
+}
+
+pub fn project_relative_skills_dir(adapter: &ToolAdapter) -> &'static str {
+    match adapter.id {
+        ToolId::Amp | ToolId::KimiCli => ".agents/skills",
+        ToolId::Antigravity => ".agents/skills",
+        ToolId::Augment => ".augment/skills",
+        ToolId::ClaudeCode => ".claude/skills",
+        ToolId::OpenClaw => "skills",
+        ToolId::Cline => ".agents/skills",
+        ToolId::CodeBuddy => ".codebuddy/skills",
+        ToolId::Codex => ".agents/skills",
+        ToolId::CommandCode => ".commandcode/skills",
+        ToolId::Continue => ".continue/skills",
+        ToolId::Crush => ".crush/skills",
+        ToolId::Cursor => ".agents/skills",
+        ToolId::Droid => ".factory/skills",
+        ToolId::GeminiCli => ".agents/skills",
+        ToolId::GithubCopilot => ".agents/skills",
+        ToolId::Goose => ".goose/skills",
+        ToolId::Junie => ".junie/skills",
+        ToolId::IflowCli => ".iflow/skills",
+        ToolId::KiloCode => ".kilocode/skills",
+        ToolId::KiroCli => ".kiro/skills",
+        ToolId::Kode => ".kode/skills",
+        ToolId::McpJam => ".mcpjam/skills",
+        ToolId::MistralVibe => ".vibe/skills",
+        ToolId::Mux => ".mux/skills",
+        ToolId::OpenCode => ".agents/skills",
+        ToolId::OpenHands => ".openhands/skills",
+        ToolId::Pi => ".pi/skills",
+        ToolId::Qoder => ".qoder/skills",
+        ToolId::QwenCode => ".qwen/skills",
+        ToolId::RooCode => ".roo/skills",
+        ToolId::Trae | ToolId::TraeCn => ".trae/skills",
+        ToolId::Windsurf => ".windsurf/skills",
+        ToolId::Zencoder => ".zencoder/skills",
+        ToolId::Neovate => ".neovate/skills",
+        ToolId::Pochi => ".pochi/skills",
+        ToolId::AdaL => ".adal/skills",
+        ToolId::Copaw
+        | ToolId::OpenClaude
+        | ToolId::QoderWork
+        | ToolId::Clawdbot
+        | ToolId::Moltbot => adapter.relative_skills_dir,
+    }
 }
 
 pub fn resolve_detect_path(adapter: &ToolAdapter) -> Result<PathBuf> {

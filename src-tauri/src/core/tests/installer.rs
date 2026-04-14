@@ -177,6 +177,8 @@ fn installs_local_skill_and_updates_from_source() {
         id: "t1".to_string(),
         skill_id: res.skill_id.clone(),
         tool: "unknown_tool".to_string(),
+        scope: "global".to_string(),
+        project_path: None,
         target_path: target.to_string_lossy().to_string(),
         mode: "copy".to_string(),
         status: "ok".to_string(),

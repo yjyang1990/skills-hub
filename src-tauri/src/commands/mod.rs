@@ -27,8 +27,13 @@ use crate::core::skills_search::{
 use crate::core::sync_engine::{
     copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid, SyncMode,
 };
-use crate::core::tool_adapters::{adapter_by_key, is_tool_installed, resolve_default_path};
+use crate::core::tool_adapters::{
+    adapter_by_key, adapters_sharing_project_skills_dir, is_tool_installed, resolve_default_path,
+    resolve_project_path, supports_project_scope,
+};
 use uuid::Uuid;
+
+const RECENT_PROJECTS_SETTING: &str = "recent_projects_v1";
 
 fn format_anyhow_error(err: anyhow::Error) -> String {
     let first = err.to_string();
@@ -105,6 +110,7 @@ pub struct ToolInfoDto {
     pub label: String,
     pub installed: bool,
     pub skills_dir: String,
+    pub supports_project_scope: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -131,6 +137,7 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
                 label: adapter.display_name.to_string(),
                 installed: ok,
                 skills_dir,
+                supports_project_scope: supports_project_scope(adapter),
             });
             if ok {
                 installed.push(key);
@@ -258,6 +265,64 @@ fn expand_home_path(input: &str) -> Result<std::path::PathBuf, anyhow::Error> {
         return Ok(home.join(stripped));
     }
     Ok(std::path::PathBuf::from(trimmed))
+}
+
+fn normalize_scope(scope: Option<&str>) -> Result<&'static str, anyhow::Error> {
+    match scope.unwrap_or("global") {
+        "global" => Ok("global"),
+        "project" => Ok("project"),
+        other => anyhow::bail!("invalid scope: {}", other),
+    }
+}
+
+#[tauri::command]
+pub async fn get_recent_projects(store: State<'_, SkillStore>) -> Result<Vec<String>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_recent_projects_impl(&store))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn save_recent_project(
+    store: State<'_, SkillStore>,
+    projectPath: String,
+) -> Result<Vec<String>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || save_recent_project_impl(&store, &projectPath))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+fn get_recent_projects_impl(store: &SkillStore) -> Result<Vec<String>, anyhow::Error> {
+    let projects = store
+        .get_setting(RECENT_PROJECTS_SETTING)?
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default();
+    Ok(projects)
+}
+
+fn save_recent_project_impl(
+    store: &SkillStore,
+    project_path: &str,
+) -> Result<Vec<String>, anyhow::Error> {
+    let path = expand_home_path(project_path)?;
+    if !path.is_dir() {
+        anyhow::bail!("projectPath must be an existing directory: {:?}", path);
+    }
+    let normalized = path.to_string_lossy().to_string();
+    let mut projects = get_recent_projects_impl(store)?;
+    projects.retain(|item| item != &normalized);
+    projects.insert(0, normalized);
+    projects.truncate(8);
+    store.set_setting(
+        RECENT_PROJECTS_SETTING,
+        &serde_json::to_string(&projects).unwrap_or_else(|_| "[]".to_string()),
+    )?;
+    Ok(projects)
 }
 
 #[tauri::command]
@@ -471,6 +536,7 @@ pub async fn sync_skill_dir(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_skill_to_tool(
     store: State<'_, SkillStore>,
     sourcePath: String,
@@ -478,14 +544,34 @@ pub async fn sync_skill_to_tool(
     tool: String,
     name: String,
     overwrite: Option<bool>,
+    scope: Option<String>,
+    projectPath: Option<String>,
 ) -> Result<SyncResultDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let adapter = adapter_by_key(&tool).ok_or_else(|| anyhow::anyhow!("unknown tool"))?;
-        if !is_tool_installed(&adapter)? {
+        let scope = normalize_scope(scope.as_deref())?;
+        let project_root = if scope == "project" {
+            let raw = projectPath
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("projectPath is required for project scope"))?;
+            let path = expand_home_path(raw)?;
+            if !path.is_dir() {
+                anyhow::bail!("projectPath must be an existing directory: {:?}", path);
+            }
+            Some(path)
+        } else {
+            None
+        };
+
+        if scope == "global" && !is_tool_installed(&adapter)? {
             anyhow::bail!("TOOL_NOT_INSTALLED|{}", adapter.id.as_key());
         }
-        let tool_root = resolve_default_path(&adapter)?;
+        let tool_root = if let Some(project_root) = &project_root {
+            resolve_project_path(&adapter, project_root)?
+        } else {
+            resolve_default_path(&adapter)?
+        };
         // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
         if let Err(err) = std::fs::create_dir_all(&tool_root) {
             if err.kind() == std::io::ErrorKind::PermissionDenied {
@@ -498,6 +584,19 @@ pub async fn sync_skill_to_tool(
             anyhow::bail!("failed to create skills dir {:?}: {}", tool_root, err);
         }
         let target = tool_root.join(&name);
+        let project_path_for_record = project_root
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string());
+        if let Some(existing) =
+            store.get_skill_target(&skillId, &tool, scope, project_path_for_record.as_deref())?
+        {
+            if existing.target_path == target.to_string_lossy() && target.exists() {
+                return Ok::<_, anyhow::Error>(SyncResultDto {
+                    mode_used: existing.mode,
+                    target_path: existing.target_path,
+                });
+            }
+        }
         let overwrite = overwrite.unwrap_or(false);
         let result =
             sync_dir_for_tool_with_overwrite(&tool, sourcePath.as_ref(), &target, overwrite)
@@ -519,8 +618,12 @@ pub async fn sync_skill_to_tool(
                     }
                 })?;
 
-        // Some tools share the same global skills directory; keep DB records consistent across them.
-        let group = crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter);
+        // Some tools share the same skills directory; keep DB records consistent across them.
+        let group = if scope == "project" {
+            adapters_sharing_project_skills_dir(&adapter)
+        } else {
+            crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter)
+        };
         for a in group {
             if !is_tool_installed(&a)? {
                 continue;
@@ -529,6 +632,8 @@ pub async fn sync_skill_to_tool(
                 id: Uuid::new_v4().to_string(),
                 skill_id: skillId.clone(),
                 tool: a.id.as_key().to_string(),
+                scope: scope.to_string(),
+                project_path: project_path_for_record.clone(),
                 target_path: result.target_path.to_string_lossy().to_string(),
                 mode: match result.mode_used {
                     SyncMode::Auto => "auto",
@@ -566,22 +671,40 @@ pub async fn unsync_skill_from_tool(
     store: State<'_, SkillStore>,
     skillId: String,
     tool: String,
+    scope: Option<String>,
+    projectPath: Option<String>,
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Some tools share the same global skills directory; unsync should update all of them.
+        let scope = normalize_scope(scope.as_deref())?;
+        let project_path = if scope == "project" {
+            let raw = projectPath
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("projectPath is required for project scope"))?;
+            Some(expand_home_path(raw)?.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        // Some tools share the same skills directory; unsync should update all of them.
         let group_tool_keys: Vec<String> = if let Some(adapter) = adapter_by_key(&tool) {
-            let group = crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter);
+            let group = if scope == "project" {
+                adapters_sharing_project_skills_dir(&adapter)
+            } else {
+                crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter)
+            };
             // If none of the group tools are installed, do nothing (treat as already not effective).
-            let mut any_installed = false;
-            for a in &group {
-                if is_tool_installed(a)? {
-                    any_installed = true;
-                    break;
+            if scope == "global" {
+                let mut any_installed = false;
+                for a in &group {
+                    if is_tool_installed(a)? {
+                        any_installed = true;
+                        break;
+                    }
                 }
-            }
-            if !any_installed {
-                return Ok::<_, anyhow::Error>(());
+                if !any_installed {
+                    return Ok::<_, anyhow::Error>(());
+                }
             }
             group
                 .into_iter()
@@ -594,12 +717,14 @@ pub async fn unsync_skill_from_tool(
         // Remove filesystem target once (shared dir => shared target path).
         let mut removed = false;
         for k in &group_tool_keys {
-            if let Some(target) = store.get_skill_target(&skillId, k)? {
+            if let Some(target) =
+                store.get_skill_target(&skillId, k, scope, project_path.as_deref())?
+            {
                 if !removed {
                     remove_path_any(&target.target_path).map_err(anyhow::Error::msg)?;
                     removed = true;
                 }
-                store.delete_skill_target(&skillId, k)?;
+                store.delete_skill_target(&skillId, k, scope, project_path.as_deref())?;
             }
         }
 
@@ -734,6 +859,8 @@ pub struct ManagedSkillDto {
 #[derive(Debug, Serialize)]
 pub struct SkillTargetDto {
     pub tool: String,
+    pub scope: String,
+    pub project_path: Option<String>,
     pub mode: String,
     pub status: String,
     pub target_path: String,
@@ -841,6 +968,8 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, S
                 .into_iter()
                 .map(|target| SkillTargetDto {
                     tool: target.tool,
+                    scope: target.scope,
+                    project_path: target.project_path,
                     mode: target.mode,
                     status: target.status,
                     target_path: target.target_path,
