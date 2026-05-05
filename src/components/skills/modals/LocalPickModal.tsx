@@ -1,4 +1,5 @@
-import { memo } from 'react'
+import { memo, useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { LocalSkillCandidate } from '../types'
 
@@ -9,7 +10,6 @@ type LocalPickModalProps = {
   localCandidateSelected: Record<string, boolean>
   onRequestClose: () => void
   onCancel: () => void
-  onToggleAll: (checked: boolean) => void
   onToggleCandidate: (subpath: string, checked: boolean) => void
   onInstall: () => void
   t: TFunction
@@ -22,17 +22,34 @@ const LocalPickModal = ({
   localCandidateSelected,
   onRequestClose,
   onCancel,
-  onToggleAll,
   onToggleCandidate,
   onInstall,
   t,
 }: LocalPickModalProps) => {
-  if (!open) return null
-
-  const selectedCount = localCandidates.filter(
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredCandidates = useMemo(() => {
+    if (!normalizedQuery) return localCandidates
+    return localCandidates.filter((c) =>
+      [c.name, c.description ?? '', c.subpath].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
+      ),
+    )
+  }, [localCandidates, normalizedQuery])
+  const selectableCandidates = filteredCandidates.filter((c) => c.valid)
+  const selectedCount = selectableCandidates.filter(
     (c) => localCandidateSelected[c.subpath],
   ).length
-  const selectableCount = localCandidates.filter((c) => c.valid).length
+  const selectableCount = selectableCandidates.length
+  const allVisibleSelected =
+    selectableCount > 0 &&
+    selectableCandidates.every((c) => localCandidateSelected[c.subpath])
+
+  const toggleVisibleCandidates = (checked: boolean) => {
+    selectableCandidates.forEach((c) => onToggleCandidate(c.subpath, checked))
+  }
+
+  if (!open) return null
 
   const mapReason = (code?: string | null) => {
     if (!code) return t('localSkillInvalid.unknown')
@@ -59,17 +76,22 @@ const LocalPickModal = ({
         </div>
         <div className="modal-body">
           <p className="label">{t('localPickBody')}</p>
+          <div className="pick-search">
+            <Search size={16} className="search-icon-abs" />
+            <input
+              className="search-input"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('pickSearchPlaceholder')}
+            />
+          </div>
           <div className="pick-toolbar">
             <label className="inline-checkbox">
               <input
                 type="checkbox"
-                checked={
-                  selectableCount > 0 &&
-                  localCandidates
-                    .filter((c) => c.valid)
-                    .every((c) => localCandidateSelected[c.subpath])
-                }
-                onChange={(e) => onToggleAll(e.target.checked)}
+                checked={allVisibleSelected}
+                onChange={(e) => toggleVisibleCandidates(e.target.checked)}
+                disabled={selectableCount === 0}
               />
               {t('selectAll')}
             </label>
@@ -81,7 +103,10 @@ const LocalPickModal = ({
             </span>
           </div>
           <div className="pick-list">
-            {localCandidates.map((c) => (
+            {filteredCandidates.length === 0 ? (
+              <div className="empty">{t('pickSearchEmpty')}</div>
+            ) : null}
+            {filteredCandidates.map((c) => (
               <div
                 className={`pick-item${c.valid ? '' : ' disabled'}`}
                 key={c.subpath}

@@ -1074,23 +1074,6 @@ function App() {
     setPendingDeleteId(skillId)
   }, [])
 
-  const handleToggleAllGitCandidates = useCallback((checked: boolean) => {
-    setGitCandidateSelected(
-      Object.fromEntries(gitCandidates.map((c) => [c.subpath, checked])),
-    )
-  }, [gitCandidates])
-
-  const handleToggleAllLocalCandidates = useCallback(
-    (checked: boolean) => {
-      setLocalCandidateSelected(
-        Object.fromEntries(
-          localCandidates.map((c) => [c.subpath, c.valid && checked]),
-        ),
-      )
-    },
-    [localCandidates],
-  )
-
   const handleToggleGitCandidate = useCallback(
     (subpath: string, checked: boolean) => {
       setGitCandidateSelected((prev) => ({
@@ -1164,18 +1147,6 @@ function App() {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTauri])
-
-  const toggleAll = useCallback(
-    (checked: boolean) => {
-    if (!plan) return
-    const next: Record<string, boolean> = {}
-    plan.groups.forEach((group) => {
-      next[group.name] = checked
-    })
-    setSelected(next)
-    },
-    [plan],
-  )
 
   const handleImport = async () => {
     if (!plan) return
@@ -2614,7 +2585,6 @@ function App() {
           selected={selected}
           variantChoice={variantChoice}
           onRequestClose={handleCloseImport}
-          onToggleAll={toggleAll}
           onToggleGroup={handleToggleGroup}
           onSelectVariant={handleSelectVariant}
           onImport={handleImport}
@@ -2719,31 +2689,33 @@ function App() {
         </div>
       ) : null}
 
-      <LocalPickModal
-        open={showLocalPickModal}
-        loading={loading}
-        localCandidates={localCandidates}
-        localCandidateSelected={localCandidateSelected}
-        onRequestClose={handleCloseLocalPick}
-        onCancel={handleCancelLocalPick}
-        onToggleAll={handleToggleAllLocalCandidates}
-        onToggleCandidate={handleToggleLocalCandidate}
-        onInstall={handleInstallSelectedLocalCandidates}
-        t={t}
-      />
+      {showLocalPickModal ? (
+        <LocalPickModal
+          open={showLocalPickModal}
+          loading={loading}
+          localCandidates={localCandidates}
+          localCandidateSelected={localCandidateSelected}
+          onRequestClose={handleCloseLocalPick}
+          onCancel={handleCancelLocalPick}
+          onToggleCandidate={handleToggleLocalCandidate}
+          onInstall={handleInstallSelectedLocalCandidates}
+          t={t}
+        />
+      ) : null}
 
-      <GitPickModal
-        open={showGitPickModal}
-        loading={loading}
-        gitCandidates={gitCandidates}
-        gitCandidateSelected={gitCandidateSelected}
-        onRequestClose={handleCloseGitPick}
-        onCancel={handleCancelGitPick}
-        onToggleAll={handleToggleAllGitCandidates}
-        onToggleCandidate={handleToggleGitCandidate}
-        onInstall={handleInstallSelectedCandidates}
-        t={t}
-      />
+      {showGitPickModal ? (
+        <GitPickModal
+          open={showGitPickModal}
+          loading={loading}
+          gitCandidates={gitCandidates}
+          gitCandidateSelected={gitCandidateSelected}
+          onRequestClose={handleCloseGitPick}
+          onCancel={handleCancelGitPick}
+          onToggleCandidate={handleToggleGitCandidate}
+          onInstall={handleInstallSelectedCandidates}
+          t={t}
+        />
+      ) : null}
 
       {updateAvailableVersion && (
         <div className="modal-backdrop" onClick={updateInstalling ? undefined : handleDismissUpdate}>

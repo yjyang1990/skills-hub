@@ -1,5 +1,5 @@
-import { memo } from 'react'
-import { Download } from 'lucide-react'
+import { memo, useMemo, useState } from 'react'
+import { Download, Search } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { OnboardingPlan } from '../types'
 
@@ -10,7 +10,6 @@ type ImportModalProps = {
   selected: Record<string, boolean>
   variantChoice: Record<string, string>
   onRequestClose: () => void
-  onToggleAll: (checked: boolean) => void
   onToggleGroup: (groupName: string, checked: boolean) => void
   onSelectVariant: (groupName: string, path: string) => void
   onImport: () => void
@@ -24,15 +23,33 @@ const ImportModal = ({
   selected,
   variantChoice,
   onRequestClose,
-  onToggleAll,
   onToggleGroup,
   onSelectVariant,
   onImport,
   t,
 }: ImportModalProps) => {
-  if (!open) return null
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredGroups = useMemo(() => {
+    if (!normalizedQuery) return plan.groups
+    return plan.groups.filter((group) => {
+      const fields = [
+        group.name,
+        ...group.variants.flatMap((variant) => [variant.path, variant.tool]),
+      ]
+      return fields.some((value) => value.toLowerCase().includes(normalizedQuery))
+    })
+  }, [normalizedQuery, plan.groups])
+  const selectedCount = filteredGroups.filter((group) => selected[group.name]).length
+  const allVisibleSelected =
+    filteredGroups.length > 0 &&
+    filteredGroups.every((group) => selected[group.name])
 
-  const selectedCount = plan.groups.filter((group) => selected[group.name]).length
+  const toggleVisibleGroups = (checked: boolean) => {
+    filteredGroups.forEach((group) => onToggleGroup(group.name, checked))
+  }
+
+  if (!open) return null
 
   return (
     <div className="modal-backdrop" onClick={onRequestClose}>
@@ -59,21 +76,37 @@ const ImportModal = ({
               <span>{t('skillsFound', { count: plan.total_skills_found })}</span>
             </div>
           </div>
+          <div className="search-container import-search">
+            <Search size={16} className="search-icon-abs" />
+            <input
+              className="search-input"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('searchPlaceholder')}
+            />
+          </div>
           <div className="sync-row">
             <label className="inline-checkbox">
               <input
                 type="checkbox"
-                checked={
-                  plan.groups.length > 0 &&
-                  plan.groups.every((group) => selected[group.name])
-                }
-                onChange={(event) => onToggleAll(event.target.checked)}
+                checked={allVisibleSelected}
+                onChange={(event) => toggleVisibleGroups(event.target.checked)}
+                disabled={filteredGroups.length === 0}
               />
               {t('selectAll')}
             </label>
+            <span className="pick-toolbar-count">
+              {t('selectedCount', {
+                selected: selectedCount,
+                total: filteredGroups.length,
+              })}
+            </span>
           </div>
           <div className="groups discovered-list">
-            {plan.groups.map((group) => (
+            {filteredGroups.length === 0 ? (
+              <div className="empty">{t('importSearchEmpty')}</div>
+            ) : null}
+            {filteredGroups.map((group) => (
               <div className="group-card" key={group.name}>
                 <div className="group-title">
                   <label className="group-select">

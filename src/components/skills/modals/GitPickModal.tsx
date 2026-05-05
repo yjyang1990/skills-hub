@@ -1,4 +1,5 @@
-import { memo } from 'react'
+import { memo, useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { GitSkillCandidate } from '../types'
 
@@ -9,7 +10,6 @@ type GitPickModalProps = {
   gitCandidateSelected: Record<string, boolean>
   onRequestClose: () => void
   onCancel: () => void
-  onToggleAll: (checked: boolean) => void
   onToggleCandidate: (subpath: string, checked: boolean) => void
   onInstall: () => void
   t: TFunction
@@ -22,16 +22,32 @@ const GitPickModal = ({
   gitCandidateSelected,
   onRequestClose,
   onCancel,
-  onToggleAll,
   onToggleCandidate,
   onInstall,
   t,
 }: GitPickModalProps) => {
-  if (!open) return null
-
-  const selectedCount = gitCandidates.filter(
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredCandidates = useMemo(() => {
+    if (!normalizedQuery) return gitCandidates
+    return gitCandidates.filter((c) =>
+      [c.name, c.description ?? '', c.subpath].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
+      ),
+    )
+  }, [gitCandidates, normalizedQuery])
+  const selectedCount = filteredCandidates.filter(
     (c) => gitCandidateSelected[c.subpath],
   ).length
+  const allVisibleSelected =
+    filteredCandidates.length > 0 &&
+    filteredCandidates.every((c) => gitCandidateSelected[c.subpath])
+
+  const toggleVisibleCandidates = (checked: boolean) => {
+    filteredCandidates.forEach((c) => onToggleCandidate(c.subpath, checked))
+  }
+
+  if (!open) return null
 
   return (
     <div className="modal-backdrop" onClick={onRequestClose}>
@@ -49,27 +65,37 @@ const GitPickModal = ({
         </div>
         <div className="modal-body">
           <p className="label">{t('gitPickBody')}</p>
+          <div className="pick-search">
+            <Search size={16} className="search-icon-abs" />
+            <input
+              className="search-input"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('pickSearchPlaceholder')}
+            />
+          </div>
           <div className="pick-toolbar">
             <label className="inline-checkbox">
               <input
                 type="checkbox"
-                checked={
-                  gitCandidates.length > 0 &&
-                  gitCandidates.every((c) => gitCandidateSelected[c.subpath])
-                }
-                onChange={(e) => onToggleAll(e.target.checked)}
+                checked={allVisibleSelected}
+                onChange={(e) => toggleVisibleCandidates(e.target.checked)}
+                disabled={filteredCandidates.length === 0}
               />
               {t('selectAll')}
             </label>
             <span className="pick-toolbar-count">
               {t('selectedCount', {
                 selected: selectedCount,
-                total: gitCandidates.length,
+                total: filteredCandidates.length,
               })}
             </span>
           </div>
           <div className="pick-list">
-            {gitCandidates.map((c) => (
+            {filteredCandidates.length === 0 ? (
+              <div className="empty">{t('pickSearchEmpty')}</div>
+            ) : null}
+            {filteredCandidates.map((c) => (
               <div className="pick-item" key={c.subpath}>
                 <label className="pick-item-checkbox">
                   <input
